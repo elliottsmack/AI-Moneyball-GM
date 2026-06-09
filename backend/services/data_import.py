@@ -1,15 +1,16 @@
 """
 Data Import Service
 -------------------
-Responsible for populating the database with player data.
-
-Currently uses mock data. Designed so future MLB API integrations
-(e.g., MLB Stats API, Baseball Reference, FanGraphs) can replace
-the mock data source by implementing the same interface.
+Orchestrates seeding the database from either mock data (Phase 1 fallback)
+or live MLB Stats API + FanGraphs feeds (Phase 2).
 """
-import pandas as pd
+import logging
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from ..database.models import Player
+from .fangraphs_service import FanGraphsService, normalize_name, estimate_salary
+
+logger = logging.getLogger(__name__)
 
 
 MOCK_PLAYERS = [
@@ -66,29 +67,16 @@ MOCK_PLAYERS = [
 ]
 
 
-def get_mock_dataframe() -> pd.DataFrame:
-    """Return mock player data as a pandas DataFrame."""
-    return pd.DataFrame(MOCK_PLAYERS)
-
-
 class DataImportService:
-    """
-    Service for importing player data into the database.
-
-    Phase 2 upgrade: Replace `import_mock_data` with `import_from_mlb_api`
-    that fetches from https://statsapi.mlb.com/api/v1/people
-    """
-
     def __init__(self, db: Session):
         self.db = db
 
     def import_mock_data(self) -> dict:
-        """Import mock player data. Returns import summary."""
-        df = get_mock_dataframe()
+        """Import mock player data. Skips existing records. Returns import summary."""
         players_created = 0
         players_skipped = 0
 
-        for _, row in df.iterrows():
+        for row in MOCK_PLAYERS:
             existing = self.db.query(Player).filter(Player.name == row["name"]).first()
             if existing:
                 players_skipped += 1
@@ -107,20 +95,116 @@ class DataImportService:
                 hr=int(row["hr"]),
                 rbi=int(row["rbi"]),
                 stolen_bases=int(row["stolen_bases"]),
+                data_source="mock",
+                season=2024,
             )
             self.db.add(player)
             players_created += 1
 
         self.db.commit()
         return {
+            "source": "mock",
             "created": players_created,
             "skipped": players_skipped,
             "total": players_created + players_skipped,
         }
 
-    def import_from_mlb_api(self, season: int = 2024) -> dict:
+    def import_live_data(self, season: int = None) -> dict:
         """
-        Phase 2 placeholder: Fetch live data from MLB Stats API.
-        Replace this method body with real API calls.
+        Fetch live data from MLB Stats API + FanGraphs, clear mock data,
+        and populate the database with real players.
         """
-        raise NotImplementedError("MLB API integration coming in Phase 2")
+        from .mlb_stats_service import MLBStatsService
+
+        logger.info(f"[sync] Starting live data import — season={season}")
+        synced_at = datetime.now(timezone.utc)
+
+        mlb_svc = MLBStatsService(season=season)
+        fg_svc = FanGraphsService(season=season)
+
+        mlb_players = mlb_svc.fetch_qualified_hitters()
+        if not mlb_players:
+            logger.error("[sync] MLB Stats API returned no players — aborting")
+            return {"error": "MLB Stats API returned no data", "source": "mock"}
+
+        actual_season = mlb_players[0].get("season") if mlb_players else season
+        enrichment = fg_svc.fetch_war_and_salary()
+        war_by_id: dict[int, float] = enrichment.get("war_by_mlb_id", {})
+        war_by_name: dict[str, float] = enrichment.get("war_by_name", {})
+        salary_by_name: dict[str, float] = enrichment.get("salary_by_name", {})
+
+        mock_salary_map = {
+            normalize_name(p["name"]): p["salary"] for p in MOCK_PLAYERS
+        }
+
+        cleared = self.db.query(Player).delete(synchronize_session=False)
+        self.db.commit()
+        logger.info(f"[sync] Cleared {cleared} players (full refresh)")
+
+        war_hits = 0
+        salary_hits = 0
+        created = 0
+
+        for p in mlb_players:
+            name = p["name"]
+            key = normalize_name(name)
+            mlb_id_int = int(p["mlb_id"]) if p.get("mlb_id") else None
+
+            # WAR: match by MLB ID first (most reliable), then name, then estimate
+            war = None
+            if mlb_id_int and mlb_id_int in war_by_id:
+                war = war_by_id[mlb_id_int]
+                war_hits += 1
+            elif key in war_by_name:
+                war = war_by_name[key]
+                war_hits += 1
+
+            if war is None:
+                war_from_ops = round((p["ops"] - 0.600) / 0.050, 1)
+                war = max(0.1, war_from_ops)
+
+            # Salary: FanGraphs → mock lookup → estimate
+            salary = salary_by_name.get(key, 0)
+            if salary:
+                salary_hits += 1
+            else:
+                salary = mock_salary_map.get(key, 0)
+            if not salary:
+                salary = estimate_salary(name, p["age"], war)
+
+            player = Player(
+                name=name,
+                age=p["age"],
+                team=p["team"],
+                position=p["position"],
+                salary=float(salary),
+                war=float(war),
+                ops=float(p["ops"]),
+                obp=float(p["obp"]),
+                slg=float(p["slg"]),
+                hr=int(p["hr"]),
+                rbi=int(p["rbi"]),
+                stolen_bases=int(p["stolen_bases"]),
+                mlb_id=mlb_id_int,
+                data_source="live",
+                season=p.get("season") or actual_season,
+                games_played=p.get("games_played"),
+                batting_avg=p.get("batting_avg"),
+                last_synced=synced_at,
+            )
+            self.db.add(player)
+            created += 1
+
+        self.db.commit()
+
+        result = {
+            "source": "live",
+            "season": actual_season,
+            "created": created,
+            "cleared_mock": cleared,
+            "war_matched": war_hits,
+            "salary_matched": salary_hits,
+            "synced_at": synced_at.isoformat(),
+        }
+        logger.info(f"[sync] Complete — {result}")
+        return result

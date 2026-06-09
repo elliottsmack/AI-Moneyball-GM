@@ -1,5 +1,11 @@
 import axios from "axios";
-import type { Player, PlayerWithScore, HealthResponse } from "../types/player";
+import type {
+  Player,
+  PlayerWithScore,
+  HealthResponse,
+  SyncStatus,
+  SyncResult,
+} from "../types/player";
 
 const client = axios.create({ baseURL: "/api" });
 
@@ -24,11 +30,21 @@ export const api = {
     client.get<Player>(`/players/${id}`).then((r) => r.data),
 
   undervalued: (top_n = 20): Promise<PlayerWithScore[]> =>
-    client.get<PlayerWithScore[]>("/players/undervalued", { params: { top_n } }).then((r) => r.data),
+    client
+      .get<PlayerWithScore[]>("/players/undervalued", { params: { top_n } })
+      .then((r) => r.data),
 
   teams: (): Promise<{ teams: string[] }> =>
     client.get<{ teams: string[] }>("/teams").then((r) => r.data),
 
   positions: (): Promise<{ positions: string[] }> =>
     client.get<{ positions: string[] }>("/teams/positions").then((r) => r.data),
+
+  syncStatus: (): Promise<SyncStatus> =>
+    client.get<SyncStatus>("/sync/status").then((r) => r.data),
+
+  triggerSync: (season?: number): Promise<SyncResult> =>
+    client
+      .post<SyncResult>("/sync", null, { params: season ? { season } : {} })
+      .then((r) => r.data),
 };

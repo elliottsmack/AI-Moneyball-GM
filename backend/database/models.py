@@ -19,6 +19,12 @@ class Player(Base):
     hr = Column(Integer, nullable=False)
     rbi = Column(Integer, nullable=False)
     stolen_bases = Column(Integer, nullable=False)
+    mlb_id = Column(Integer, nullable=True)
+    data_source = Column(String, nullable=True, default="mock")
+    season = Column(Integer, nullable=True)
+    games_played = Column(Integer, nullable=True)
+    batting_avg = Column(Float, nullable=True)
+    last_synced = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
