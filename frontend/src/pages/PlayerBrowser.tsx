@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Search, SlidersHorizontal, ChevronUp, ChevronDown } from "lucide-react";
+import { Search, ChevronUp, ChevronDown } from "lucide-react";
 import { api } from "../services/api";
 import type { Player, SortField, SortDir } from "../types/player";
 import PlayerTable from "../components/PlayerTable";

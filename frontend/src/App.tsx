@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BarChart2, Users, TrendingUp, Star, Activity } from "lucide-react";
+import { BarChart2, Users, Star, Activity } from "lucide-react";
 import Dashboard from "./pages/Dashboard";
 import PlayerBrowser from "./pages/PlayerBrowser";
 import Undervalued from "./pages/Undervalued";

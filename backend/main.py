@@ -1,14 +1,20 @@
 """
 AI Moneyball GM — FastAPI Backend
+Production: serves built React frontend from frontend/dist/
 """
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from .database.db import engine, SessionLocal
 from .database.models import Base
 from .services.data_import import DataImportService
 from .routers import players, teams, health
+
+DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
 
 @asynccontextmanager
@@ -39,11 +45,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health.router)
-app.include_router(players.router)
-app.include_router(teams.router)
+app.include_router(health.router, prefix="/api")
+app.include_router(players.router, prefix="/api")
+app.include_router(teams.router, prefix="/api")
 
 
-@app.get("/")
-def root():
-    return {"app": "AI Moneyball GM", "version": "1.0.0", "docs": "/docs"}
+if os.path.isdir(DIST_DIR):
+    app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_spa(full_path: str = ""):
+        index = os.path.join(DIST_DIR, "index.html")
+        if os.path.exists(index):
+            return FileResponse(index)
+        return {"error": "Frontend not built. Run: cd frontend && npm run build"}
+else:
+    @app.get("/")
+    def root():
+        return {"app": "AI Moneyball GM", "version": "1.0.0", "docs": "/docs"}
