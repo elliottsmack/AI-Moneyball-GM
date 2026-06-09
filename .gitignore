@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pythonlibs/
+*.egg-info/
+.env
+
+# Database
+database/*.db
+
+# Node
+frontend/node_modules/
+node_modules/
+frontend/dist/
+dist/
+
+# Replit
+.replit
+.upm/
+.cache/
+replit.nix
+
+# OS
+.DS_Store
+*.swp
